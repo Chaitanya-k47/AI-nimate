@@ -1,0 +1,25 @@
+# Python Virtual Environment
+venv/
+backend/venv/
+
+# Python cache
+backend/__pycache__/
+*.pyc
+
+backend/smpl_models/
+
+# IDE and OS files
+.vs/
+.vscode/
+.DS_Store
+*.sln
+*.suo
+
+#
+# Unreal Engine - Correct Paths from Root
+#
+unreal/AInimate/Binaries/
+unreal/AInimate/Build/
+unreal/AInimate/DerivedDataCache/
+unreal/AInimate/Intermediate/
+unreal/AInimate/Saved/

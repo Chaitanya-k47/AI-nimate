@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -8,25 +8,49 @@ public class AInimate : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
+		// --- Standard Runtime Modules ---
+		// These are always available.
 		PublicDependencyModuleNames.AddRange(new string[] { 
-    	"Core", 
-    	"CoreUObject", 
-    	"Engine", 
-    	"InputCore", 
-    	"VaRest", 
-    	"Json", 
-    	"JsonUtilities", 
-    	"HTTP" 
-	});
+			"Core", 
+			"CoreUObject", 
+			"Engine",
+			"LevelSequence",
+			"ControlRig"
+		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
-
-		// Uncomment if you are using Slate UI
-		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"InputCore",
+			"VaRest", 
+			"Json", 
+			"JsonUtilities",
+			//"UnrealEd", //direct dependency
+			//"Sequencer", //indirect dependency
+			"MovieScene",
+			//"MovieSceneTools", //direct dependency
+			"MovieSceneTracks",
+		});
 		
-		// Uncomment if you are using online features
-		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
+		if(Target.bBuildEditor)
+		{
+			PublicDependencyModuleNames.AddRange(new string[] { 
+				"Core", 
+				"CoreUObject", 
+				"Engine",
+				"LevelSequence",
+				"ControlRig"
+			});
 
-		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+			PrivateDependencyModuleNames.AddRange(new string[] {
+				"InputCore",
+				"VaRest", 
+				"Json", 
+				"JsonUtilities",
+				"UnrealEd",
+				"Sequencer",
+				"MovieScene",
+				"MovieSceneTools",
+				"MovieSceneTracks",
+			});
+		}
 	}
 }

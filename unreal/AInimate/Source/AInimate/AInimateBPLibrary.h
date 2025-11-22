@@ -23,6 +23,8 @@ public:
 	 * @param TargetSequence the Level Sequence asset to use as a workbench.
 	 * @param TargetActor the Skeletal Mesh Actor in the level to animate.
 	 * @param ControlRigToUse the Control Rig asset that knows how to apply the transforms.
+	 * @param OutTotalFrames The total number of frames parsed from the JSON.
+	 * @param OutFrameRate The frame rate parsed from the JSON.
 	 * @param OutErrorReason a string describing why the function failed.
 	 * @return True if the animation was baked successfully, false otherwise.
 	*/
@@ -33,6 +35,8 @@ public:
 		ULevelSequence* TargetSequence,
 		ASkeletalMeshActor* TargetActor,
 		UControlRig* ControlRigToUse,
+		int32& OutTotalFrames,
+		int32& OutFrameRate,
 		FString& OutErrorReason
 	);
 

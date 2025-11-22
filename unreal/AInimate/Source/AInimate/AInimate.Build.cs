@@ -50,6 +50,7 @@ public class AInimate : ModuleRules
 				"MovieScene",
 				"MovieSceneTools",
 				"MovieSceneTracks",
+				"LevelSequenceEditor"
 			});
 		}
 	}

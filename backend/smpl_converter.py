@@ -1,7 +1,8 @@
-#This file contains the main logic and imports the BONE_MAP from the other file.
+#this file contains the main logic and imports the BONE_MAP from the bone_mapping.py file.
 #run this command in terminal everytime you open this project: .\venv\Scripts\activate
 
 import os
+import sys
 import torch
 import smplx
 import numpy as np
@@ -58,14 +59,17 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     betas_np = np.array(smpl_output_data['betas'])
     trans_np = np.array(smpl_output_data['trans'])
     
-    #poses_np shape: [num_frames, 72] (column index 0-2: root bone pose, column index 3-71: body pose), for each row(frame).
-    num_frames = poses_np.shape[0] 
+    #poses_np shape: [num_frames, 66] (column index 0-2: root bone pose, column index 3-65: body pose), for each row(frame).
+    num_frames = poses_np.shape[0]
     #betas_np shape: [10,] (only first 10 are used for SMPL, rest are ignored) 1D array
     #trans_np shape: [num_frames, 3]
 
     #converting numpy arrays to torch tensors
     global_orient = torch.tensor(poses_np[:, :3], dtype=torch.float32).to(DEVICE) #poses for root bone.
     body_pose = torch.tensor(poses_np[:, 3:], dtype=torch.float32).to(DEVICE)
+
+    if betas_np.ndim == 2:
+        betas_np = betas_np.flatten()
     betas = torch.tensor(betas_np, dtype=torch.float32).unsqueeze(0).to(DEVICE)
     
     #transl = torch.tensor(trans_np, dtype=torch.float32).to(DEVICE)
@@ -74,7 +78,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     #betas require a batch dimension, to make it a 2D tensor.
     #created tensors are 2D and have shapes:
     #global_orient: [num_frames, 3]
-    #body_pose: [num_frames, 69]
+    #body_pose: [num_frames, 63]
     #betas: [1, 10] (a batch dimension is added)
     
     with torch.no_grad():
@@ -93,7 +97,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     the root joint being at the origin (0,0,0).
         OR
     The other way to look at it is that the root joints's position in world space is at
-    world origin (0,0,0). So all other joints are relative to that.       
+    world origin (0,0,0). So all other joints are relative to that.     
     
     Hence,
         we keep the model's root at world origin (0,0,0) and get all joints coordinates
@@ -133,75 +137,86 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     #full_pose_np shape: [num_frames, num_joints=24, 3]
     # -1 here means infer from other dimensions.
     
+    #we need to store Global Rotations (Quaternions) for all 24 bones
+    #Shape: [Frames, 24, 4] (x,y,z,w)
+    global_rotations = np.zeros((num_frames, 24, 4))
+    
+    #Iterate through bones in hierarchical order (0 is root, others follow)
+    #SMPL bone indices are already sorted by hierarchy
+    for i in range(24):
+        parent_idx = parents[i]
+        
+        #convert current bone's local axis-angle to Quat (Scipy is (x, y, z, w))
+        local_axis_angle = full_pose_np[:, i, :]
+        local_rot_obj = R.from_rotvec(local_axis_angle)
+        
+        if parent_idx == -1:
+            # Root Bone: Global is just Local
+            global_rotations[:, i, :] = local_rot_obj.as_quat()
+        else:
+            # Child Bone: Global = Parent_Global * Local
+            parent_global_quat = global_rotations[:, parent_idx, :]
+            
+            # Scipy rotation multiplication
+            parent_r = R.from_quat(parent_global_quat)
+            total_r = parent_r * local_rot_obj
+            global_rotations[:, i, :] = total_r.as_quat()
+            
+     # --- 2. CALCULATE HEIGHT OFFSET (AUTO-GROUNDING) ---
+    # We look at Frame 0. We find the lowest Y value (since Y is Up in SMPL).
+    # We calculate how much we need to shift up to make that lowest point 0.
+    
+    # SMPL joints: 0-Pelvis, 10-Left Foot/Toe, 11-Right Foot/Toe (approximate indices)
+    # Ideally we scan all joints to find the absolute floor.
+    frame_0_joints = joints_world[0] + trans_np[0] # Apply root trans to get absolute pos
+    min_y = np.min(frame_0_joints[:, 1]) # 1 is Y axis
+    
+    # If min_y is -0.85 (legs hanging down), we need to add +0.85 to bring it to 0.
+    # However, usually we want a slight buffer or the AI puts feet slightly below 0.
+    # Let's shift so the lowest point is exactly at 0.
+    height_offset = -min_y 
+    
+    print(f"Auto-Grounding: Shifting character up by {height_offset*100:.2f} cm")
+    
     #loop through frames and bones to create the final JSON structure.
     output_frames = [] #list(ordered) of frames. each frame is a dictionary of bone transforms.
     for frame_idx in range(num_frames):
+        bone_transforms = {}
         
-        bone_transforms_for_this_frame = {} #dictionary of bone transforms for this frame.
-        for smpl_bone_idx, ue_bone_name in BONE_MAP.items():
-            
-            #ROTATION(direct conversion, as we already have local rotation in axis-angle format)
-            axis_angle = full_pose_np[frame_idx, smpl_bone_idx]
-            r = R.from_rotvec(axis_angle)
-            quat = r.as_quat() #[x, y, z, w]
-            
-            #TRANSLATION(local translation calculation relative to parent, from world positions)
-            parent_idx = parents[smpl_bone_idx]
-            if parent_idx == -1: #this is the root bone(pelvis)
-                local_translation = joints_world[frame_idx, smpl_bone_idx]
-            else:
-                child_pos = joints_world[frame_idx, smpl_bone_idx]
-                parent_pos = joints_world[frame_idx, parent_idx]
-                local_translation = child_pos - parent_pos
-            
-            
-            #coordinate system conversion from SMPL to UE
-            #SMPL uses a right-handed coordinate system with Y-up.
-            #Unreal Engine uses a left-handed coordinate system with Z-up.
-            #UE_X = SMPL_X
-            #UE_Y = -SMPL_Z
-            #UE_Z = SMPL_Y
+        # Get Root Translation for this frame (from input data)
+        # This acts as the offset for the whole character in World Space
+        root_trans_vec = trans_np[frame_idx] 
 
-            #location:
-            ue_translation = [
-                local_translation[0],
-                -local_translation[2],
-                local_translation[1],
-            ]
+        for smpl_idx, ue_name in BONE_MAP.items():
             
-            #rotation:
-            ue_quat = [
-                quat[0], #x
-                -quat[2], #y
-                quat[1], #z
-                quat[3] #w
-            ]
+            # --- POSITIONS (Global) ---
+            # Start with SMPL joint position (which is relative to root)
+            # Add the Root Translation to place it truly in World Space
+            raw_pos = joints_world[frame_idx, smpl_idx] + root_trans_vec
+            # Apply Height Offset to Y (SMPL Up)
+            # We add a tiny bit (0.02) extra for shoe sole thickness.
+            corrected_y = raw_pos[1] + height_offset + 0.02
+            # Swizzle Position (Y-up to Z-up): (x, y, z) -> (x, -z, y)
+            ue_pos = [ raw_pos[0], -raw_pos[2], corrected_y ]
+
+            # --- ROTATIONS (Global) ---
+            # Get the calculated Global Quaternion
+            raw_quat = global_rotations[frame_idx, smpl_idx] # (x, y, z, w)
+            # Swizzle Quaternion (Y-up to Z-up)
+            # Standard conversion: (x, y, z, w) -> (x, -z, y, w)
+            ue_quat = [ raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3] ]
             
-            #add this bone's transform to the dictionary for this frame.           
-            bone_transforms_for_this_frame[ue_bone_name] = {
-                "location": [v*100 for v in ue_translation], #convert from meters to centimeters.
+            bone_transforms[ue_name] = {
+                "location": [p * 100 for p in ue_pos], # m to cm
                 "rotation": ue_quat
             }
-        #bone loop ends here.
         
-        # Handle Root Motion separately
-        # This is the global movement of the entire character
-        root_translation_vector = trans_np[frame_idx]
-        ue_root_translation = [
-            root_translation_vector[0],
-            -root_translation_vector[2],
-            root_translation_vector[1],
-        ]
-        
-        output_frames.append(
-            {
-                "frame_number": frame_idx,
-                "bone_transforms": bone_transforms_for_this_frame,
-                "root_transform":{
-                    "location": [v*100 for v in ue_root_translation], #convert from meters to centimeters.
-                }
-            }
-        )
+        output_frames.append({
+            "frame_number": frame_idx,
+            "bone_transforms": bone_transforms,
+            "root_transform": { "location": [0,0,0], "rotation": [0,0,0,1] } # Unused
+        })
+
     #frame loop ends here.
     
     #final output dictionary
@@ -215,51 +230,181 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     }
     
     return final_output
-    #return {} #temporary return to avoid errors while debugging.
+    
 
 
-#----------------TESTING BLOCK------------------
-# This part of the script will only run when you execute `python smpl_converter.py`
-# directly. It allows us to test the converter without a full server or ML model.
 if __name__ == '__main__':
     
+    #----HELPER FUNCTION: write debug file. ----
+    def write_debug_file(data_dict, filename):
+        """Writes the contents of a dictionary (arrays) to a text file."""
+        print(f"Writing debug content to: {filename}...")
+        
+        # Set numpy to print everything without ... truncation
+        np.set_printoptions(threshold=sys.maxsize)
+        
+        with open(filename, 'w') as f:
+            f.write(f"DEBUG DATA DUMP\n")
+            f.write("=" * 30 + "\n\n")
+            
+            for key, value in data_dict.items():
+                f.write(f"--- Key: {key} ---\n")
+                
+                # Handle numpy arrays
+                if isinstance(value, np.ndarray):
+                    f.write(f"Shape: {value.shape}\n")
+                    f.write(f"Data Type: {value.dtype}\n")
+                    f.write("Data:\n")
+                    f.write(np.array2string(value, separator=', '))
+                else:
+                    # Handle primitives (int/float)
+                    f.write(str(value))
+                    
+                f.write("\n\n" + "="*30 + "\n\n")
+   
+    
+    #----HELPER FUNCTION: Generate Dummy Data ----
     def generate_dummy_data(num_frames=60):
         """Creates a sample input dictionary with random motion."""
         print(f"Generating dummy SMPL data for {num_frames} frames...")
-        # A real model would output this. Here, we create random noise for testing.
-        # Shape of poses: (num_frames, 72)
-        # Shape of trans: (num_frames, 3)
-        # Shape of betas: (16,) -> smplx requires 16, but only uses first 10 for SMPL
+        
         dummy_data = {
-            'poses': np.random.rand(num_frames, 72) * 0.1, # Small random rotations
-            'trans': np.random.rand(num_frames, 3) * 0.01, # Small random movements
-            'betas': np.zeros(10),
+            'poses': np.zeros((num_frames, 72), dtype=np.float32), 
+            'trans': np.zeros((num_frames, 3), dtype=np.float32), 
+            'betas': np.zeros(10, dtype=np.float32), 
             'frame_rate': 30
         }
-        # Set a more interesting root motion (e.g., walking forward)
-        for i in range(num_frames):
-             dummy_data['trans'][i, 0] = i * 0.02 # Move forward on X axis
         
         return dummy_data
 
 
-    # 1. Generate some fake data that looks like our ML model's output
-    test_smpl_data = generate_dummy_data(num_frames=90)
+    #----HELPER FUNCTION: Load from .npz file ----
+    def load_from_npz(filepath):
+        """loads data from .npz file and structures it for converter."""    
+        print(f"Opening .npz file: {filepath}")
+        
+        #load from file
+        data = np.load(filepath)
+                
+        #2.EXTRACT: get data for converter
+        """
+            'global_orient' -> Root rotation [Frames, 3]
+            'body_pose'     -> Body rotation [Frames, 63 or 66] (21 or 22 joints * 3)
+            'transl'        -> Global translation(Root transl) [Frames, 3]
+            'betas'         -> Shape params [10]
+        """
+        try:
+            """
+                Combine global_orient and body_pose to make full 'poses' array [Frames, 66] or [Frames, 72]
+                npz output shows body_pose is (60, 63) or (60, 66) and global_orient is (60, 3)
+                Concatenate along axis 1 (columns)
+                63 + 3 = 66 parameters. (22 joints) or 66 + 3 = 69 parameters (23 joints)
+                
+                Note: Standard SMPL has 24 joints (72 params). 
+                If model outputs less than 24 joints, we pad the remaining joints with zeros to reach 72.
+                Whatever the model outputs, we add 1 root joint to it i.e. [global_orient].
+            """
+            
+            global_orient = data['global_orient']
+            body_pose = data['body_pose']
+            
+            #combine these two to make full 'poses' array.
+            full_poses = np.concatenate((global_orient, body_pose), axis=1) #axis 1 = columns
+            
+            #pad wid zeros to reach 72 columns/parameters if needed
+            current_cols = full_poses.shape[1]
+            if current_cols < 72:
+                padding = np.zeros((full_poses.shape[0], 72 - current_cols))
+                full_poses = np.concatenate((full_poses, padding), axis=1)
+                
+            #extract translation
+            if 'transl' in data.files:
+                trans = data['transl']
+            elif 'trans' in data.files:
+                trans = data['trans']
+            else:
+                #default zero translation if missing
+                trans = np.zeros((full_poses.shape[0], 3))
+                
+            #extract betas
+            if 'betas' in data.files:
+                raw_betas = data['betas']
+                
+                # Check if it's 2D (Frames, Betas) like (60, 10)
+                if raw_betas.ndim == 2:
+                    # Take the first frame's betas. Body shape is constant.
+                    betas = raw_betas[0]
+                else:
+                    betas = raw_betas
+
+                # Ensure we only take the first 10 shape parameters
+                if betas.shape[0] > 10:
+                    betas = betas[:10]
+            else:
+                betas = np.zeros(10)
+                
+            #Construct dictionary
+            formatted_data = {
+                'poses': full_poses,
+                'trans': trans,
+                'betas': betas,
+                'frame_rate': 30 #defaulting to 30 as NPZ usually doesn't store framerate
+            }
+            
+            return formatted_data
+        
+        except KeyError as e:
+            print(f"Error parsing NPZ structure. Missing expected key: {e}")
+            raise e
+
+
+    # --- INPUT LOGIC ---
+    # Define the name of the input file
+    input_npz_filename = "input.npz"
+    
+    # Get directory of this script
+    script_dir = os.path.dirname(__file__)
+    
+    # Path to the input file
+    input_npz_filepath = os.path.join(script_dir, input_npz_filename)
+
+    test_smpl_data = {}
+
+# Logic: Check for NPZ first. If not found, Fallback to Dummy.
+    if os.path.exists(input_npz_filepath):
+        # CASE 1: NPZ File Found
+        print(f"STATUS: NPZ Input file '{input_npz_filename}' found.")
+        try:
+            test_smpl_data = load_from_npz(input_npz_filepath)
+            debug_path = os.path.join(script_dir, "input_debug.txt")
+            write_debug_file(test_smpl_data, debug_path)
+            print("NPZ data loaded and parsed successfully.")
+        except Exception as e:
+            print(f"ERROR: Failed to load/parse NPZ file. Reason: {e}")
+            exit(1)
+    else:
+        # CASE 2: File Not Found (Fallback)
+        print(f"STATUS: Input file '{input_npz_filename}' NOT found.")
+        print("Falling back to generating dummy data...")
+        test_smpl_data = generate_dummy_data(num_frames=90)
+        debug_path = os.path.join(script_dir, "dummy_debug.txt")
+        write_debug_file(test_smpl_data, debug_path)
 
     # 2. Run our conversion function
     print("Running SMPL to UE conversion...")
     ue_json_output = convert_smpl_to_ue_json(test_smpl_data)
     print("Conversion complete.")
 
-    script_dir = os.path.dirname(__file__)
+    # 3. Save the output to the Unreal Project folder
     relative_target_dir = os.path.join('..', 'unreal', 'AInimate')
     target_dir = os.path.join(script_dir, relative_target_dir)
     os.makedirs(target_dir, exist_ok=True)
-    output_filepath = os.path.join(target_dir, "test_output.json")
     
+    output_filepath = os.path.join(target_dir, "test_output.json")
+
     with open(output_filepath, 'w') as f:
         json.dump(ue_json_output, f, indent=4)
-    
+
     print(f"\nSuccessfully generated animation data.")
     print(f"Output saved to: {output_filepath}")
     print(f"Total frames: {ue_json_output['meta']['total_frames']}")

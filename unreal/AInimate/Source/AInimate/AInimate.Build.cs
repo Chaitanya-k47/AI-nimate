@@ -15,7 +15,8 @@ public class AInimate : ModuleRules
 			"CoreUObject", 
 			"Engine",
 			"LevelSequence",
-			"ControlRig"
+			"ControlRig",
+			
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
@@ -28,6 +29,7 @@ public class AInimate : ModuleRules
 			"MovieScene",
 			//"MovieSceneTools", //direct dependency
 			"MovieSceneTracks",
+			"AssetRegistry"
 		});
 		
 		if(Target.bBuildEditor)
@@ -50,7 +52,10 @@ public class AInimate : ModuleRules
 				"MovieScene",
 				"MovieSceneTools",
 				"MovieSceneTracks",
-				"LevelSequenceEditor"
+				"LevelSequenceEditor",
+				"AssetTools",
+				"SequencerScriptingEditor"
+
 			});
 		}
 	}

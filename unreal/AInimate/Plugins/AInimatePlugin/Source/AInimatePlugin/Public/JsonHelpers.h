@@ -13,7 +13,7 @@
  * 
  */
 UCLASS()
-class AINIMATE_API UJsonHelpers : public UBlueprintFunctionLibrary
+class AINIMATEPLUGIN_API UJsonHelpers : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 

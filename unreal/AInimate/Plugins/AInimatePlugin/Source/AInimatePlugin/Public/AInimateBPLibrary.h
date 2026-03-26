@@ -13,7 +13,7 @@ class UAnimSequence;
 class USkeletalMesh;
 
 UCLASS()
-class AINIMATE_API UAInimateBPLibrary : public UBlueprintFunctionLibrary
+class AINIMATEPLUGIN_API UAInimateBPLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 	

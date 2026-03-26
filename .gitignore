@@ -1,12 +1,28 @@
-# Python Virtual Environment
+# ==========================================
+# PYTHON & MONOREPO RULES
+# ==========================================
+
+# Virtual Environments
 venv/
-backend/venv/
+.env/
 
-# Python cache
-backend/__pycache__/
-*.pyc
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
 
-backend/smpl_models/
+# AInimate Specific: Ignore generated test data & huge model files inside the Plugin
+unreal/AInimate/Plugins/AInimatePlugin/Content/PythonBackend/smpl_models/
+unreal/AInimate/Plugins/AInimatePlugin/Content/PythonBackend/test_output.json
+unreal/AInimate/Plugins/AInimatePlugin/Content/PythonBackend/*_debug.txt
+
+# Ignore the final generated Animation Sequence .uasset files
+unreal/AInimate/Content/AInimate/Animations/
+
+
+# ==========================================
+# UNREAL ENGINE & C++ RULES
+# ==========================================
 
 # IDE and OS files
 .vs/
@@ -14,12 +30,42 @@ backend/smpl_models/
 .DS_Store
 *.sln
 *.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
 
-#
-# Unreal Engine - Correct Paths from Root
-#
+# Main Unreal Engine Folders
 unreal/AInimate/Binaries/
 unreal/AInimate/Build/
 unreal/AInimate/DerivedDataCache/
 unreal/AInimate/Intermediate/
 unreal/AInimate/Saved/
+
+# Plugin Generated Folders
+unreal/AInimate/Plugins/*/Binaries/
+unreal/AInimate/Plugins/*/Intermediate/
+
+# Built data for maps
+*_BuiltData.uasset
+
+# Compiled Object/Library files (General C++)
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.so
+*.dylib
+*.dll
+*.mod
+*.lai
+*.la
+*.a
+*.lib
+*.exe
+*.out
+*.app

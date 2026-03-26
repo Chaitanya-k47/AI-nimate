@@ -1,5 +1,6 @@
 #this file contains the main logic and imports the BONE_MAP from the bone_mapping.py file.
-#run this command in terminal everytime you open this project: .\venv\Scripts\activate
+#to activate virtual environment: .\venv\Scripts\activate
+#then run: cd unreal/AInimate/Plugins/AInimatePlugin/Content/PythonBackend
 
 import os
 import sys
@@ -396,9 +397,7 @@ if __name__ == '__main__':
     print("Conversion complete.")
 
     # 3. Save the output to the Unreal Project folder
-    relative_target_dir = os.path.join('..', 'unreal', 'AInimate')
-    target_dir = os.path.join(script_dir, relative_target_dir)
-    os.makedirs(target_dir, exist_ok=True)
+    target_dir = script_dir # Save it right next to the script!
     
     output_filepath = os.path.join(target_dir, "test_output.json")
 

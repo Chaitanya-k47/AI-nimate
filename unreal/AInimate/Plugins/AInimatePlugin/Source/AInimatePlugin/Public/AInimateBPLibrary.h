@@ -36,4 +36,6 @@ public:
 		FString& OutErrorReason
 	);
 
+	UFUNCTION(BlueprintCallable, Category="AInimate Tools")
+	static bool RunSystemCommandAndWait(const FString& Command);
 };

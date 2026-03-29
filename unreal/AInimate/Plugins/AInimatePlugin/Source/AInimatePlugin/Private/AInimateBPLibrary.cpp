@@ -464,4 +464,53 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
 
 #endif //WITH_EDITOR
 
-}   
+}
+
+bool UAInimateBPLibrary::RunSystemCommandAndWait(const FString& Command)
+{
+    uint32 ProcessID = 0;
+    FString Executable = TEXT("cmd.exe");
+
+    // /c tells cmd to execute then terminate.
+    FString Parameters = FString::Printf(TEXT("/c \"%s\""), *Command);
+
+    UE_LOG(LogTemp, Warning, TEXT("Executing System Command: %s"), *Parameters);
+
+	FProcHandle ProcHandle = FPlatformProcess::CreateProc(
+        *Executable, 
+        *Parameters, 
+        false, // bLaunchDetached (False means it's a child process of UE5)
+        true,  // bLaunchHidden (True means no ugly black command prompt window pops up!)
+        false, // bLaunchReallyHidden
+        &ProcessID, 
+        0, 
+        nullptr, 
+        nullptr
+    );
+
+    if(ProcHandle.IsValid())
+    {
+        //freeze UE5 main thread until process finishes:
+        FPlatformProcess::WaitForProc(ProcHandle);
+
+        int32 ReturnCode = 0;
+        FPlatformProcess::GetProcReturnCode(ProcHandle, &ReturnCode);
+
+        FPlatformProcess::CloseProc(ProcHandle);
+
+        //if python execution finished successfully, Exist code 0.
+        if (ReturnCode == 0)
+        {
+            UE_LOG(LogTemp, Log, TEXT("System Command completed successfully."));
+            return true; 
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("System Command failed with exit code: %d"), ReturnCode);
+            return false;
+        }
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("Failed to create the system process."));
+    return false;    
+}

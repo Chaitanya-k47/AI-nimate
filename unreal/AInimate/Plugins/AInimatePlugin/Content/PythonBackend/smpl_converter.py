@@ -53,6 +53,8 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     
     """
     
+    IS_Z_UP_DATA = True 
+    
     #smpl_output_data is a dictionary of raw SMPL parameters from ML model.
     #it contains the keys: 'poses', 'betas', 'trans', 'frame_rate', etc.
     #extract this data into arrays and then convert it into tensors, for pytorch to process.
@@ -132,6 +134,22 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     parents = smpl_model.parents.cpu().numpy()
     #parents shape: [num_joints=24,] 1D array
     
+    #AUTO-DETECT COORDINATE SYSTEM (Y-UP vs Z-UP) ---
+    #We calculate the vector from the Pelvis (Joint 0) to the Head (Joint 15) at Frame 0.
+    # Whichever axis has the largest distance is the "Up" axis for this specific dataset.
+    pelvis_pos_f0 = joints_world[0, 0]
+    head_pos_f0 = joints_world[0, 15]
+    up_vector = head_pos_f0 - pelvis_pos_f0
+    
+    # Compare the absolute magnitude of the Y and Z axes
+    if abs(up_vector[2]) > abs(up_vector[1]):
+        IS_Z_UP_DATA = True
+        print(f"Auto-Detected System: Z-UP (Up Vector: {up_vector})")
+    else:
+        IS_Z_UP_DATA = False
+        print(f"Auto-Detected System: Y-UP (Up Vector: {up_vector})")
+    
+    
     #reshape poses_np for easier processing
     #full pose is the global orientation + body pose
     full_pose_np = poses_np.reshape(num_frames, -1, 3)
@@ -163,21 +181,22 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
             total_r = parent_r * local_rot_obj
             global_rotations[:, i, :] = total_r.as_quat()
             
-     # --- 2. CALCULATE HEIGHT OFFSET (AUTO-GROUNDING) ---
-    # We look at Frame 0. We find the lowest Y value (since Y is Up in SMPL).
+     # --- 2. CALCULATE HEIGHT OFFSET (DYNAMIC AUTO-GROUNDING) ---
+    # We look at Frame 0. We find the lowest Y or Z value (depending on the coordinate system).
     # We calculate how much we need to shift up to make that lowest point 0.
     
     # SMPL joints: 0-Pelvis, 10-Left Foot/Toe, 11-Right Foot/Toe (approximate indices)
     # Ideally we scan all joints to find the absolute floor.
     frame_0_joints = joints_world[0] + trans_np[0] # Apply root trans to get absolute pos
-    min_y = np.min(frame_0_joints[:, 1]) # 1 is Y axis
     
-    # If min_y is -0.85 (legs hanging down), we need to add +0.85 to bring it to 0.
-    # However, usually we want a slight buffer or the AI puts feet slightly below 0.
-    # Let's shift so the lowest point is exactly at 0.
-    height_offset = -min_y 
-    
-    print(f"Auto-Grounding: Shifting character up by {height_offset*100:.2f} cm")
+    if IS_Z_UP_DATA:
+        min_height = np.min(frame_0_joints[:, 2]) # Z is Up
+        height_offset = -min_height
+        print(f"Auto-Grounding (Z-Up): Shifting character UP by {height_offset*100:.2f} cm")
+    else:
+        min_height = np.min(frame_0_joints[:, 1]) # Y is Up
+        height_offset = -min_height
+        print(f"Auto-Grounding (Y-Up): Shifting character UP by {height_offset*100:.2f} cm")
     
     #loop through frames and bones to create the final JSON structure.
     output_frames = [] #list(ordered) of frames. each frame is a dictionary of bone transforms.
@@ -194,18 +213,28 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
             # Start with SMPL joint position (which is relative to root)
             # Add the Root Translation to place it truly in World Space
             raw_pos = joints_world[frame_idx, smpl_idx] + root_trans_vec
-            # Apply Height Offset to Y (SMPL Up)
-            # We add a tiny bit (0.02) extra for shoe sole thickness.
-            corrected_y = raw_pos[1] + height_offset + 0.02
-            # Swizzle Position (Y-up to Z-up): (x, y, z) -> (x, -z, y)
-            ue_pos = [ raw_pos[0], -raw_pos[2], corrected_y ]
-
+            
             # --- ROTATIONS (Global) ---
             # Get the calculated Global Quaternion
             raw_quat = global_rotations[frame_idx, smpl_idx] # (x, y, z, w)
-            # Swizzle Quaternion (Y-up to Z-up)
-            # Standard conversion: (x, y, z, w) -> (x, -z, y, w)
-            ue_quat = [ raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3] ]
+            
+            # --- DYNAMIC SWIZZLING ---
+            if IS_Z_UP_DATA:
+                # Data is already Z-Up. 
+                corrected_z = raw_pos[2] + height_offset + 0.02
+                
+                #We swap X and Y to convert Right-Handed to Left-Handed and face X-Forward.
+                ue_pos = [raw_pos[1], raw_pos[0], corrected_z]
+                #ue_pos = [raw_pos[0], raw_pos[1], corrected_z]
+                
+                #Swap X and Y, AND negate the vector parts to flip Handedness!
+                ue_quat = [-raw_quat[1], -raw_quat[0], -raw_quat[2], raw_quat[3]]
+                
+            else:
+                # Y-Up to Z-Up logic
+                corrected_y = raw_pos[1] + height_offset + 0.02
+                ue_pos = [raw_pos[0], -raw_pos[2], corrected_y]
+                ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
             
             bone_transforms[ue_name] = {
                 "location": [p * 100 for p in ue_pos], # m to cm
@@ -306,11 +335,19 @@ if __name__ == '__main__':
                 Whatever the model outputs, we add 1 root joint to it i.e. [global_orient].
             """
             
-            global_orient = data['global_orient']
-            body_pose = data['body_pose']
-            
-            #combine these two to make full 'poses' array.
-            full_poses = np.concatenate((global_orient, body_pose), axis=1) #axis 1 = columns
+            if 'poses' in data.files:
+                # Standard AMASS format: Everything is in one 'poses' array
+                full_poses = data['poses']
+                # AMASS sometimes has 156 parameters (SMPL+H with hands). We only want the first 72.
+                if full_poses.shape[1] > 72:
+                    full_poses = full_poses[:, :72]
+            elif 'global_orient' in data.files and 'body_pose' in data.files:
+                # Processed format: Split into root and body
+                global_orient = data['global_orient']
+                body_pose = data['body_pose']
+                full_poses = np.concatenate((global_orient, body_pose), axis=1) 
+            else:
+                raise KeyError("Could not find 'poses' or 'global_orient'/'body_pose' in the NPZ file.")
             
             #pad wid zeros to reach 72 columns/parameters if needed
             current_cols = full_poses.shape[1]
@@ -407,7 +444,3 @@ if __name__ == '__main__':
     print(f"\nSuccessfully generated animation data.")
     print(f"Output saved to: {output_filepath}")
     print(f"Total frames: {ue_json_output['meta']['total_frames']}")
-       
-
-            
-    

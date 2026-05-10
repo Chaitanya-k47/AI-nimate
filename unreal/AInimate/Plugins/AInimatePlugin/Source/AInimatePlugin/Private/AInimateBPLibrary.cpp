@@ -317,6 +317,14 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
     for(const TPair<FName, TArray<FTransform>>& BoneData : BoneTransformsPerBone)
     {
         FName BoneName = BoneData.Key;
+
+        //skip root calibration
+        //The root bone doesn't exist in SMPL, so we don't calibrate it against a rest pose.
+        if (BoneName == FName("root")) 
+        {
+            continue; 
+        }
+
         int32 BoneIndex = RefSkeleton.FindBoneIndex(BoneName);
         if(BoneIndex == INDEX_NONE) continue;
 

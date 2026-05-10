@@ -240,11 +240,20 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
                 "location": [p * 100 for p in ue_pos], # m to cm
                 "rotation": ue_quat
             }
+            
+        # --ROOT MOTION ---
+        #we create a fake "root" bone transform.
+        # It takes the X and Y movement from the pelvis, but stays flat on the floor (Z = 0).
+        #using the Identity quaternion [0,0,0,1] so it doesn't rotate, only translates.
+        pelvis_pos_ue = bone_transforms[BONE_MAP[0]]["location"] # SMPL 0 is Pelvis
+        bone_transforms["root"] = {
+            "location": [pelvis_pos_ue[0], pelvis_pos_ue[1], 0.0], # X, Y, 0
+            "rotation":[0.0, 0.0, 0.0, 1.0] # No rotation
+        }
         
         output_frames.append({
             "frame_number": frame_idx,
-            "bone_transforms": bone_transforms,
-            "root_transform": { "location": [0,0,0], "rotation": [0,0,0,1] } # Unused
+            "bone_transforms": bone_transforms
         })
 
     #frame loop ends here.
@@ -261,7 +270,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     
     return final_output
     
-
+    
 
 if __name__ == '__main__':
     

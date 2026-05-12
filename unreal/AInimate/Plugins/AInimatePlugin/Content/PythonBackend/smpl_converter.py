@@ -53,7 +53,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     
     """
     
-    IS_Z_UP_DATA = True 
+    IS_Z_UP_DATA = False #will be auto-detected later. Defaulting to False (Y-Up) for now. 
     
     #smpl_output_data is a dictionary of raw SMPL parameters from ML model.
     #it contains the keys: 'poses', 'betas', 'trans', 'frame_rate', etc.
@@ -177,13 +177,11 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         raw_pos = tpose_joints_world[0, smpl_idx] 
         raw_quat = tpose_global_rotations[0, smpl_idx] 
         
-        if IS_Z_UP_DATA:
-            ue_pos = [raw_pos[1], raw_pos[0], raw_pos[2]] 
-            ue_quat = [-raw_quat[1], -raw_quat[0], -raw_quat[2], raw_quat[3]]
-        else:
-            ue_pos =[raw_pos[0], -raw_pos[2], raw_pos[1]]
-            ue_quat =[raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
-        
+        #SMPL TPose is ALWAYS natively Y-Up
+        #unconditionally use the Y-Up to UE5 Z-Up swizzle for the calibration pose
+        ue_pos = [raw_pos[0], -raw_pos[2], raw_pos[1]]
+        ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
+            
         calibration_pose[ue_name] = {
             "location":[p * 100 for p in ue_pos], 
             "rotation": ue_quat
@@ -269,9 +267,11 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
                 #We swap X and Y to convert Right-Handed to Left-Handed and face X-Forward.
                 ue_pos = [raw_pos[1], raw_pos[0], corrected_z]
                 #ue_pos = [raw_pos[0], raw_pos[1], corrected_z]
+                #ue_pos = [raw_pos[2], -raw_pos[0], raw_pos[1]] #test
                 
                 #Swap X and Y, AND negate the vector parts to flip Handedness!
                 ue_quat = [-raw_quat[1], -raw_quat[0], -raw_quat[2], raw_quat[3]]
+                #ue_quat = [raw_quat[2], -raw_quat[0], raw_quat[1], raw_quat[3]]
                 
             else:
                 # Y-Up to Z-Up logic

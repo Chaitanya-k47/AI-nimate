@@ -310,34 +310,41 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
         }
     }
 
-    //now calculate correction deltas.
-    //assuming frame 0 from json input is T-pose or close to it.
-    //Correction = Inverse(SMPL_T_Pose) * Unreal_Ref_Pose.
+    //parsing clibration pose from json
     TMap<FName, FQuat> CalibrationOffsets;
-    for(const TPair<FName, TArray<FTransform>>& BoneData : BoneTransformsPerBone)
+
+    const TSharedPtr<FJsonObject>* CalibrationPoseObj;
+    if ((*MetaObject)->TryGetObjectField(TEXT("calibration_pose"), CalibrationPoseObj))
     {
-        FName BoneName = BoneData.Key;
-
-        //skip root calibration
-        //The root bone doesn't exist in SMPL, so we don't calibrate it against a rest pose.
-        if (BoneName == FName("root")) 
+        for(const auto& Pair : (*CalibrationPoseObj)->Values)
         {
-            continue; 
+            FName BoneName(*Pair.Key);
+            int32 BoneIndex = RefSkeleton.FindBoneIndex(BoneName);
+
+            if(BoneIndex == INDEX_NONE || BoneName == FName("root")) continue; //skip root and missing bones
+
+            const TSharedPtr<FJsonObject>* TransformJson;
+            if (Pair.Value->TryGetObject(TransformJson))
+            {
+                // 1. Get the pure SMPL T-Pose Rotation for this bone
+                FTransform SMPL_Rest_Transform = ParseTransformFromJson(*TransformJson);
+                FQuat SMPL_Rest_Rot = SMPL_Rest_Transform.GetRotation();
+                
+                // 2. Get the Unreal Reference Pose Rotation
+                FQuat UE_Ref_Rot = GlobalRefPose[BoneIndex].GetRotation();
+
+                // 3. Calculate the true, purely structural offset Delta
+                FQuat Correction = SMPL_Rest_Rot.Inverse() * UE_Ref_Rot;
+                CalibrationOffsets.Add(BoneName, Correction);
+            }
         }
-
-        int32 BoneIndex = RefSkeleton.FindBoneIndex(BoneName);
-        if(BoneIndex == INDEX_NONE) continue;
-
-        //get smpl frame 0 rotation (global)
-        FQuat SMPL_Rest_Rot = BoneData.Value[0].GetRotation();
-
-        // Get Unreal Reference Rotation (Global)
-        FQuat UE_Ref_Rot = GlobalRefPose[BoneIndex].GetRotation();
-
-        //calculate delta:
-        FQuat Correction = SMPL_Rest_Rot.Inverse() * UE_Ref_Rot;
-        CalibrationOffsets.Add(BoneName, Correction);
     }
+    else
+    {
+        OutErrorReason = TEXT("JSON 'meta' is missing 'calibration_pose' field. Update Python script.");
+        return nullptr;
+    }
+
     
     //now actually create tracks for every bone we collected:
     for (const TPair<FName, TArray<FTransform>>& BoneData : BoneTransformsPerBone)

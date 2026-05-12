@@ -112,7 +112,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     """
     
     #Get the world space 3D joint positions(considering the model root at world origin) from the output
-    joints_world = model_output.joints.squeeze(0).cpu().numpy()
+    joints_world = model_output.joints.cpu().numpy()
     #joints_world shape: [num_frames, num_joints=24, 3]
     
     """
@@ -150,6 +150,49 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         print(f"Auto-Detected System: Y-UP (Up Vector: {up_vector})")
     
     
+    #GENERATE THE PURE MATHEMATICAL T-POSE FOR CALIBRATION
+    with torch.no_grad():
+        tpose_orient = torch.zeros((1, 3), dtype=torch.float32).to(DEVICE)
+        tpose_body = torch.zeros((1, body_pose.shape[1]), dtype=torch.float32).to(DEVICE)
+        tpose_output = smpl_model(
+            betas=betas, body_pose=tpose_body, global_orient=tpose_orient,
+            return_verts=False, return_full_pose=False
+        )
+        
+    tpose_joints_world = tpose_output.joints.cpu().numpy()
+    tpose_global_rotations = np.zeros((1, 24, 4)) #single frame, 24 joints, quaternion (4)
+    
+    for i in range(24):
+        parent_idx = parents[i]
+        local_rot_obj = R.from_rotvec([0, 0, 0])
+        if parent_idx == -1:
+            tpose_global_rotations[0, i, :] = local_rot_obj.as_quat()
+        else:
+            parent_global_quat = tpose_global_rotations[0, parent_idx, :]
+            total_r = R.from_quat(parent_global_quat) * local_rot_obj
+            tpose_global_rotations[0, i, :] = total_r.as_quat()
+    
+    calibration_pose = {}
+    for smpl_idx, ue_name in BONE_MAP.items():
+        raw_pos = tpose_joints_world[0, smpl_idx] 
+        raw_quat = tpose_global_rotations[0, smpl_idx] 
+        
+        if IS_Z_UP_DATA:
+            ue_pos = [raw_pos[1], raw_pos[0], raw_pos[2]] 
+            ue_quat = [-raw_quat[1], -raw_quat[0], -raw_quat[2], raw_quat[3]]
+        else:
+            ue_pos =[raw_pos[0], -raw_pos[2], raw_pos[1]]
+            ue_quat =[raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
+        
+        calibration_pose[ue_name] = {
+            "location":[p * 100 for p in ue_pos], 
+            "rotation": ue_quat
+        }
+        
+    #also adding dummy root to calibration pose just for structural safety
+    calibration_pose["root"] = { "location":[0.0, 0.0, 0.0], "rotation":[0.0, 0.0, 0.0, 1.0]}  
+        
+        
     #reshape poses_np for easier processing
     #full pose is the global orientation + body pose
     full_pose_np = poses_np.reshape(num_frames, -1, 3)
@@ -262,7 +305,8 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     final_output = {
         "meta": {        
             "frame_rate": smpl_output_data['frame_rate'],
-            "total_frames": num_frames
+            "total_frames": num_frames,
+            "calibration_pose": calibration_pose
         },
         
         "frames": output_frames #a list of dictionaries, each representing a frame.

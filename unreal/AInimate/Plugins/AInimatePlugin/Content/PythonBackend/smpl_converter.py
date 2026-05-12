@@ -153,6 +153,13 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     #GENERATE THE PURE MATHEMATICAL T-POSE FOR CALIBRATION
     with torch.no_grad():
         tpose_orient = torch.zeros((1, 3), dtype=torch.float32).to(DEVICE)
+        
+        # --- FIX 1: MAKE THE T-POSE STAND UP ---
+        # If the dataset is Z-Up (AMASS), the animation is standing up via a 90deg X rotation.
+        # We MUST apply this same rotation to the T-Pose so the C++ doesn't double-rotate.
+        if IS_Z_UP_DATA:
+            tpose_orient[0, 0] = np.pi / 2.0  # 90 degrees in radians
+        
         tpose_body = torch.zeros((1, body_pose.shape[1]), dtype=torch.float32).to(DEVICE)
         tpose_output = smpl_model(
             betas=betas, body_pose=tpose_body, global_orient=tpose_orient,
@@ -166,7 +173,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         parent_idx = parents[i]
         local_rot_obj = R.from_rotvec([0, 0, 0])
         if parent_idx == -1:
-            tpose_global_rotations[0, i, :] = local_rot_obj.as_quat()
+            tpose_global_rotations[0, i, :] = R.from_rotvec(tpose_orient[0].cpu().numpy()).as_quat()
         else:
             parent_global_quat = tpose_global_rotations[0, parent_idx, :]
             total_r = R.from_quat(parent_global_quat) * local_rot_obj
@@ -177,10 +184,15 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         raw_pos = tpose_joints_world[0, smpl_idx] 
         raw_quat = tpose_global_rotations[0, smpl_idx] 
         
-        #SMPL TPose is ALWAYS natively Y-Up
-        #unconditionally use the Y-Up to UE5 Z-Up swizzle for the calibration pose
-        ue_pos = [raw_pos[0], -raw_pos[2], raw_pos[1]]
-        ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
+        # --- FIX 2: CONSISTENT SWIZZLING ---
+        # Because the T-Pose is now matching the animation's orientation,
+        # we MUST use the exact same swizzle logic as the animation loop!
+        if IS_Z_UP_DATA:
+            ue_pos = [raw_pos[1], raw_pos[0], raw_pos[2]] 
+            ue_quat = [-raw_quat[1], -raw_quat[0], -raw_quat[2], raw_quat[3]]
+        else:
+            ue_pos =[raw_pos[0], -raw_pos[2], raw_pos[1]]
+            ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
             
         calibration_pose[ue_name] = {
             "location":[p * 100 for p in ue_pos], 

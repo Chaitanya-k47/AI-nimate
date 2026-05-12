@@ -347,27 +347,19 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
     }
 
     
-    //now actually create tracks for every bone we collected:
+
+    // --- THE NEW, CLEAN TRACK GENERATION LOOP ---
     for (const TPair<FName, TArray<FTransform>>& BoneData : BoneTransformsPerBone)
     {
         const FName BoneName = BoneData.Key;
-        const TArray<FTransform>& RawGlobalKeys = BoneData.Value;
+        const TArray<FTransform>& LocalKeys = BoneData.Value; // The JSON data is ALREADY Local!
 
-        // skip if skeleton doesnt have this bone
         const int32 BoneIndex = RefSkeleton.FindBoneIndex(BoneName);
-        if (BoneIndex == INDEX_NONE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("JSON bone '%s' not found in skeleton. Skipping."), *BoneName.ToString());
-            continue;
-        }
-        //get parent index
-        const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
+        if (BoneIndex == INDEX_NONE) continue;
 
-        // Create track if needed
         Controller.RemoveBoneTrack(BoneName, false);
         Controller.AddBoneCurve(BoneName, false);
 
-        //build separate arrays for translations, rotations, scales
         TArray<FVector3f> Translations;
         TArray<FQuat4f>   Rotations;
         TArray<FVector3f> Scales;
@@ -376,75 +368,40 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
         Rotations.Reserve(TotalFrames);
         Scales.Reserve(TotalFrames);
 
-        // Retrieve the calculated correction for this bone
-        FQuat BoneCorrection = CalibrationOffsets.Contains(BoneName) ? CalibrationOffsets[BoneName] : FQuat::Identity;
-
         for (int32 FrameIndex = 0; FrameIndex < TotalFrames; ++FrameIndex)
         {
-            //1.Get Raw Global Transform from JSON
-            FTransform CurrentGlobal = RawGlobalKeys[FrameIndex];
+            FTransform LocalTransform = LocalKeys[FrameIndex]; 
 
-            //2. apply calibration
-            FQuat CorrectedRot = CurrentGlobal.GetRotation() * BoneCorrection;
-            CurrentGlobal.SetRotation(CorrectedRot);
-
-            //3, convert to local space(relative to parent.)
-            FTransform LocalTransform;
-            if(ParentIndex == INDEX_NONE)  //#
+            // --- 1. TRANSLATION (The Spaghetti Fix) ---
+            if (BoneName == FName("pelvis") || BoneName == FName("root"))
             {
-                //root bone: stays in global space.
-                LocalTransform = CurrentGlobal;
+                // Only allow the root/pelvis to move through space
+                Translations.Add((FVector3f)LocalTransform.GetTranslation());
             }
             else
             {
-                // We need the Parent's Global Transform for this frame to do the math.
-                // We must apply the Parent's calibration too!
-                FName ParentName = RefSkeleton.GetBoneName(ParentIndex);
-                
-                FTransform ParentGlobal = FTransform::Identity;
-                
-                // Try to find parent data in JSON
-                if(BoneTransformsPerBone.Contains(ParentName))
-                {
-                    ParentGlobal = BoneTransformsPerBone[ParentName][FrameIndex];
-                    // Apply Parent Correction
-                    FQuat ParentCorrection = CalibrationOffsets.Contains(ParentName) ? CalibrationOffsets[ParentName] : FQuat::Identity;
-                    ParentGlobal.SetRotation(ParentGlobal.GetRotation() * ParentCorrection);
-                }
-                else
-                {
-                    // Fallback to Reference Pose if parent not animated
-                    ParentGlobal = GlobalRefPose[ParentIndex];
-                }
-
-                // MATH: Local = Global_Child * Inverse(Global_Parent)
-                LocalTransform = CurrentGlobal.GetRelativeTransform(ParentGlobal);
+                // Lock EVERY other bone to the Unreal Skeleton's physical length!
+                Translations.Add((FVector3f)RefSkeleton.GetRefBonePose()[BoneIndex].GetTranslation());
             }
 
-            Translations.Add((FVector3f)LocalTransform.GetTranslation());
-            
+            // --- 2. ROTATION ---
             FQuat4f ThisRot = (FQuat4f)LocalTransform.GetRotation();
+            
+            // Anti-flip logic for smooth interpolation
             if(Rotations.Num() > 0 && ((Rotations.Last() | ThisRot) < 0.f))
             {
-                //flip if dot < 0 to avoid 180° interpolation jumps
                 ThisRot *= -1.f;
             }
             Rotations.Add(ThisRot);
             
+            // --- 3. SCALE ---
             Scales.Add((FVector3f)LocalTransform.GetScale3D());
-
         }
 
-        Controller.SetBoneTrackKeys(
-            BoneName,
-            Translations,
-            Rotations,
-            Scales,
-            false
-        );
+        Controller.SetBoneTrackKeys(BoneName, Translations, Rotations, Scales, false);
     }
 
-    Controller.NotifyPopulated(); // optional, keeps editor UI in sync
+    Controller.NotifyPopulated(); 
     Controller.CloseBracket();
 
      //5.---------- save the package ----------

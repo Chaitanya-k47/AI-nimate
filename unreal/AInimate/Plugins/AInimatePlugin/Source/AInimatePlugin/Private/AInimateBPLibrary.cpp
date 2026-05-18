@@ -422,7 +422,21 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
                 LocalTransform = CurrentGlobal.GetRelativeTransform(ParentGlobal);
             }
 
-            Translations.Add((FVector3f)LocalTransform.GetTranslation());
+            // --- SPAGHETTI FIX: Translation Locking ---
+            FVector3f FinalTranslation;
+            if (BoneName == FName("root") || BoneName == FName("pelvis"))
+            {
+                // Only the root and pelvis are allowed to move in space
+                FinalTranslation = (FVector3f)LocalTransform.GetTranslation();
+            }
+            else
+            {
+                // All other bones (arms, legs, spine) MUST stay at their UE Reference Pose distance
+                // This prevents bone-stretching / mesh-tearing
+                FinalTranslation = (FVector3f)RefSkeleton.GetRefBonePose()[BoneIndex].GetTranslation();
+            }
+
+            Translations.Add(FinalTranslation);
             
             FQuat4f ThisRot = (FQuat4f)LocalTransform.GetRotation();
             if(Rotations.Num() > 0 && ((Rotations.Last() | ThisRot) < 0.f))

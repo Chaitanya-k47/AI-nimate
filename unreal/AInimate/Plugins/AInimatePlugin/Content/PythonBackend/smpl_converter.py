@@ -150,17 +150,51 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         print(f"Auto-Detected System: Y-UP (Up Vector: {up_vector})")
     
     
-    #GENERATE THE PURE MATHEMATICAL T-POSE FOR CALIBRATION
+    # GENERATE THE SMPL TPOSE FOR CALIBRATION
     with torch.no_grad():
-        tpose_orient = torch.zeros((1, 3), dtype=torch.float32).to(DEVICE)
-        
-        # --- FIX 1: MAKE THE T-POSE STAND UP ---
-        # If the dataset is Z-Up (AMASS), the animation is standing up via a 90deg X rotation.
-        # We MUST apply this same rotation to the T-Pose so the C++ doesn't double-rotate.
-        if IS_Z_UP_DATA:
-            tpose_orient[0, 0] = np.pi / 2.0  # 90 degrees in radians
-        
+        #for T pose we set the global orientation/root pose to that of first frame of the input animation.
+        tpose_orient = global_orient[0].unsqueeze(0) 
         tpose_body = torch.zeros((1, body_pose.shape[1]), dtype=torch.float32).to(DEVICE)
+        
+        # --- ARMS FIX 1 (hardcoded) ---
+        # import math
+        # arm_drop_rad = 45.0 * (math.pi / 180.0)
+        # clav_drop_rad = 20.0 * (math.pi / 180.0) # Adjust this if the shoulders look too high/low
+        
+        # # Remember: body_pose skips the root (0), so joint N is at index N-1.
+        # # Axis 0 = X (Twist), Axis 1 = Y (Forward/Back), Axis 2 = Z (Up/Down)
+
+        # # Left Clavicle (Joint 13 -> Index 12). Drop down (Z axis).
+        # tpose_body[0, 12 * 3 + 2] = -clav_drop_rad
+        # # Optional: If shoulders need to roll forward, uncomment and tweak the Y axis:
+        # # tpose_body[0, 12 * 3 + 1] = 5.0 * (math.pi / 180.0)
+        
+        # # Right Clavicle (Joint 14 -> Index 13). Drop down (Z axis).
+        # tpose_body[0, 13 * 3 + 2] = clav_drop_rad
+        # # Optional: If shoulders need to roll forward, uncomment and tweak the Y axis:
+        # # tpose_body[0, 13 * 3 + 1] = -5.0 * (math.pi / 180.0) 
+        
+        # # Left Upper Arm (Joint 16 -> Index 15). Drop down (Z axis).
+        # tpose_body[0, 15 * 3 + 2] = -arm_drop_rad
+        
+        # # Right Upper Arm (Joint 17 -> Index 16). Drop down (Z axis).
+        # tpose_body[0, 16 * 3 + 2] = arm_drop_rad
+        
+        # --- ARMS FIX 2: USE FRAME 0 POSE FOR ARMS ---
+        # SMPL Joints: 
+        # 13, 14 (Clavicles)
+        # 16, 17 (UpperArms)
+        # 18, 19 (LowerArms)
+        # 20, 21 (Hands)
+        # Remember: body_pose skips the root (0), so joint N is at body_pose index N-1.
+        arm_joint_indices = [12, 13, 15, 16, 17, 18, 19, 20]
+        
+        # Copy the exact axis-angle data from Frame 0 for these specific joints
+        for idx in arm_joint_indices:
+            # Each joint has 3 values (X, Y, Z). We copy the slice [idx*3 to idx*3+3]
+            tpose_body[0, idx*3 : idx*3+3] = body_pose[0, idx*3 : idx*3+3]
+    
+    
         tpose_output = smpl_model(
             betas=betas, body_pose=tpose_body, global_orient=tpose_orient,
             return_verts=False, return_full_pose=False
@@ -171,7 +205,17 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
     
     for i in range(24):
         parent_idx = parents[i]
-        local_rot_obj = R.from_rotvec([0, 0, 0])
+        
+        # --- WE MUST USE THE A-POSE ROTATIONS HERE ---
+        # Get the actual local rotation we just injected into the body!
+        if i == 0:
+            local_axis_angle = [0,0,0] # Root is handled by tpose_orient
+        else:
+            local_axis_angle = tpose_body[0, (i-1)*3 : (i-1)*3 + 3].cpu().numpy()
+            
+        local_rot_obj = R.from_rotvec(local_axis_angle)
+        
+        #local_rot_obj = R.from_rotvec([0, 0, 0])
         if parent_idx == -1:
             tpose_global_rotations[0, i, :] = R.from_rotvec(tpose_orient[0].cpu().numpy()).as_quat()
         else:
@@ -184,7 +228,7 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         raw_pos = tpose_joints_world[0, smpl_idx] 
         raw_quat = tpose_global_rotations[0, smpl_idx] 
         
-        # --- FIX 2: CONSISTENT SWIZZLING ---
+        # ---CONSISTENT SWIZZLING ---
         # Because the T-Pose is now matching the animation's orientation,
         # we MUST use the exact same swizzle logic as the animation loop!
         if IS_Z_UP_DATA:
@@ -193,7 +237,10 @@ def convert_smpl_to_ue_json(smpl_output_data: dict) -> dict:
         else:
             ue_pos =[raw_pos[0], -raw_pos[2], raw_pos[1]]
             ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]]
-            
+         
+        # ue_pos =[raw_pos[0], -raw_pos[2], raw_pos[1]]
+        # ue_quat = [raw_quat[0], -raw_quat[2], raw_quat[1], raw_quat[3]] 
+        
         calibration_pose[ue_name] = {
             "location":[p * 100 for p in ue_pos], 
             "rotation": ue_quat

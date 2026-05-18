@@ -335,6 +335,7 @@ UAnimSequence* UAInimateBPLibrary::GenerateAnimationFromJSON_Direct(
 
                 // 3. Calculate the true, purely structural offset Delta
                 FQuat Correction = SMPL_Rest_Rot.Inverse() * UE_Ref_Rot;
+                
                 CalibrationOffsets.Add(BoneName, Correction);
                 UE_LOG(LogTemp, Log, TEXT("Calibration Offset for bone '%s': %s"), *BoneName.ToString(), *Correction.ToString());
             }

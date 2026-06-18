@@ -44,7 +44,7 @@ BONE_MAP = {
     2:  'thigh_r',
     5:  'calf_r',
     8:  'foot_r',
-    11: 'ball_r',  
+    11: 'ball_r', 
 }
 
 # Note: Some SMPL joints are intentionally omitted as they don't have a

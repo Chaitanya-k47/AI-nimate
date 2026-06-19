@@ -6,19 +6,20 @@
 
 ---
 
-## 🚀 The Mission: Bridging the "Deployment Gap"
-While Generative AI can now synthesize human motion from text, a massive technical gap remains: **AI models output raw joint coordinates, but Game Engines require complex binary assets.** 
+## 🚀 The Objective: Bridging the "Deployment Gap"
+While Generative AI can now synthesize human motion from text, a massive technical **'Deployment Gap'** remains: AI models output raw joint trajectories, but professional game engines require complex binary assets.
 
-The **AInimate ADP** is a high-performance bridge that bypasses lossy FBX exports and manual retargeting. It takes raw mathematical motion parameters and performs **Direct Data Injection**—writing coordinate data directly into Unreal Engine's memory to author native `.uasset` animation sequences in $O(n)$ time.
+**AInimate** is an end-to-end framework designed to bridge this gap. While Stage 1 of the project (Generative Backend) focuses on synthesizing SMPL joint trajectories via Diffusion models, this repository contains **Stage 2: The Animation Deployment Pipeline (ADP)**. 
 
+The ADP serves as a high-performance bridge that bypasses traditional, lossy FBX exports and manual retargeting. By performing **Direct Data Injection**—writing mathematical coordinate data directly into Unreal Engine's binary memory—the pipeline authors native `.uasset` animation sequences with zero data loss in $O(n)$ time.
 ---
 
-## 📽️ Visual Validation (From AI to Asset)
+## 📽️ Visual Validation (Input vs. Output)
 
-| **Stage 1.5: Kinematic Validation** | **Stage 2: Native Engine Injection** |
+| **Stage 1.5: Ground Truth** | **Stage 2: Native Engine Injection** |
 | :---: | :---: |
 | ![Matplotlib Visualization](media/python_viz.gif) | ![Unreal Engine Playback](media/ue5_playback.gif) |
-| *Ground-truth solving using the **ACCAD Dataset*** | *Native .uasset injected and calibrated in UE5.6* |
+| *Raw SMPL parameter solving in Matplotlib **ACCAD Dataset*** | *Native .uasset injected and calibrated in UE5.6.1* |
 
 ---
 

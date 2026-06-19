@@ -77,7 +77,7 @@ This correction is applied to every frame, ensuring the character maintains perf
 | **Direct Mapping (Twisted/Clipping)** | **Identity Calibration (Corrected)** |
 | :---: | :---: |
 | ![Calibration Error](media/calibration_before.png) | ![Calibration Success](media/calibration_after.png) |
-| *Arms clipping due to T-Pose/A-Pose mismatch* | *Corrected alignment via $Q_{\Delta}$ math* |
+| *Arms clipping due to T-Pose/A-Pose mismatch* | *Corrected alignment via QΔ math* |
 
 ---
 

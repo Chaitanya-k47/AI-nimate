@@ -1,3 +1,5 @@
+***
+
 # AInimate: Animation Deployment Pipeline (ADP)
 ### Direct Mathematical Injection of AI-Generated Motion Data into Unreal Engine 5.6.1
 
@@ -7,7 +9,7 @@
 ---
 
 ## 🚀 The Objective: Bridging the "Deployment Gap"
-While Generative AI can now synthesize human motion from text, a massive technical **'Deployment Gap'** remains: AI models output raw joint trajectories, but professional game engines require complex binary assets.
+While Generative AI can now synthesize human motion from text, a massive technical **"Deployment Gap"** remains: AI models output raw joint trajectories, but professional game engines require complex binary assets.
 
 **AInimate** is an end-to-end framework designed to bridge this gap. While Stage 1 of the project (Generative Backend) focuses on synthesizing SMPL joint trajectories via Diffusion models, this repository contains **Stage 2: The Animation Deployment Pipeline (ADP)**. 
 
@@ -51,25 +53,35 @@ This module standardizes raw ML outputs into an "Engine-Ready" mathematical stat
 ## 🛠️ Pipeline Stage 2: C++ Injection Engine (`AInimateBPLibrary.cpp`)
 Running natively within Unreal Engine 5.6.1, this backend performs the final bit-level asset authoring.
 
-*   **Identity Calibration Algorithm ($Q_{\Delta}$):** SMPL data assumes a mathematical **T-Pose**, but Unreal characters use an **A-Pose**. The plugin solves the rotational delta in Global Space:
-    $$Q_{\Delta} = (Q_{SMPL\_Identity})^{-1} \otimes Q_{UE\_Reference}$$
-*   **Direct Memory Injection:** Utilizes the modern **`IAnimationDataController`** API. This allows us to "bite" data directly into the binary animation curves, ensuring **zero precision loss** compared to standard FBX imports.
-*   **Recursive FK Solver:** A hierarchical solver that translates the corrected global transforms back into the parent-relative local keys required by the engine's `.uasset` format.
+*   **Direct Memory Injection:** Utilizes the modern **`IAnimationDataController`** API to author animation curves directly in memory, ensuring zero data loss and $O(n)$ latency.
+*   **Recursive FK Solver:** A hierarchical solver that translates corrected global transforms back into the parent-relative local keys required by the engine's `.uasset` format.
+*   **Translation Locking Layer:** To prevent "Spaghetti Monster" artifacts (mesh tearing), I implemented a locking layer that forces deformer bones to the Unreal Reference Skeleton's lengths while preserving the high-fidelity AI-generated rotations.
 
 ---
 
-## 🧠 Engineering Challenge: Solving the "Spaghetti Monster"
-A major hurdle was **Mesh Tearing** caused by mismatched bone lengths between the mathematical SMPL model and the artistic UE5 Mannequin. 
+## 🧠 Engineering Challenge: Resolving Skeletal Mismatch ($Q_{\Delta}$)
 
-**The Solution:** I implemented a **Translation Locking Layer**. During the recursive solver, the code explicitly discards dynamic translations for all deformer bones, locking them to the Unreal Reference Skeleton's lengths while preserving the high-fidelity AI-generated rotations. This guaranteed 100% mesh integrity across all datasets.
+One of the primary hurdles in AI-to-Engine deployment is the **Rest Pose Discrepancy**. The AI model generates motion for a mathematical SMPL skeleton in a **T-Pose**, whereas the Unreal Engine 5 sk_mannequin is authored in an **A-Pose**.
 
-| **Mismatched Lengths (Artifact)** | **Translation Locking (Fix)** |
+### The Problem: Rotational Divergence
+Directly mapping SMPL rotations onto a UE5 mesh results in severe limb distortion. Because the "zero state" of the arms differs by roughly 45 degrees, a "Walk" animation from the AI would cause the Unreal character’s arms to clip into its own chest or twist unnaturally.
+
+### The Solution: Identity Calibration Algorithm
+I developed a mathematical bridge that calculates a **Rotational Delta ($Q_{\Delta}$)** for every bone once at the start of the injection. By bringing both the SMPL Identity T-Pose and the Unreal Reference Pose into **Global Space**, the system "discovers" the structural difference between the two skeletons.
+
+**The Calibration Formula:**
+$$Q_{\Delta} = (Q_{SMPL\_Global\_Identity})^{-1} \otimes Q_{UE\_Global\_Reference}$$
+
+This correction is applied to every frame, ensuring the character maintains perfect posture regardless of the target skeleton's native rest pose.
+
+| **Direct Mapping (Twisted/Clipping)** | **Identity Calibration (Corrected)** |
 | :---: | :---: |
-| ![Spaghetti Error](media/spaghetti_fix_before.png) | ![Clean Fix](media/spaghetti_fix_after.png) |
+| ![Calibration Error](media/calibration_before.png) | ![Calibration Success](media/calibration_after.png) |
+| *Arms clipping due to T-Pose/A-Pose mismatch* | *Corrected alignment via $Q_{\Delta}$ math* |
 
 ---
 
-## 📊 The Data Bridge (JSON)
+## 📊 The Data Contract (JSON Bridge)
 The stages communicate via a high-precision JSON bridge. This decoupled architecture allows the AI to be hosted on high-end GPU servers while the plugin remains lightweight for the developer's workstation.
 
 ```json
@@ -82,3 +94,15 @@ The stages communicate via a high-precision JSON bridge. This decoupled architec
     { "bone_transforms": { "pelvis": {"location": [150, 200, 92], "rotation": [x,y,z,w]} } }
   ]
 }
+```
+
+---
+
+## ⚙️ Tech Stack
+*   **Engine:** Unreal Engine 5.6.1 (C++, Blueprints)
+*   **Deep Learning Support:** Python 3.10, PyTorch, SMPL-X (smplx)
+*   **Math:** NumPy (v1.23.5 - pinned for binary stability), SciPy
+*   **APIs:** IAnimationDataController, FReferenceSkeleton
+
+---
+*Developed as the Final Year B.Tech Project at Tezpur University.*

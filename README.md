@@ -36,7 +36,7 @@ Our Stage 1 backend generates a compressed NumPy file (`input.npz`) containing:
 *   **`global_orient`**: $[Frames, 3]$ — The world-space heading of the character.
 *   **`body_pose`**: $[Frames, 69]$ — Local axis-angle rotations for 23 joints.
 *   **`transl`**: $[Frames, 3]$ — Global $(X, Y, Z)$ translation vectors.
-*   **`betas`**: $[10]$ — Shape coefficients defining the character's unique body proportions.
+*   **`betas`**: $[10]$ — Shape coefficients defining body proportions.
 
 ---
 
@@ -45,44 +45,47 @@ This module standardizes raw ML outputs into an "Engine-Ready" mathematical stat
 
 *   **Coordinate Auto-Detection:** Utilizes a **Vertical Axis Dominance heuristic** to detect if source data is **Y-Up** (Standard SMPL) or **Z-Up** (AMASS/ACCAD) and applies the correct basis permutation.
 *   **Root-Motion Splitting:** A specialized algorithm that "steals" horizontal displacement $(X, Y)$ from the pelvis and assigns it to a virtual **Root Bone**. The pelvis retains vertical $(Z)$ dynamics, enabling character navigation within Unreal’s physics system.
-*   **Scalability via `bone_mapping.py`:** Rather than hardcoding bone names, the system uses a **Translation Dictionary**. This makes the project **skeleton-agnostic**; by simply updating this map, the pipeline can target any humanoid skeleton (MetaHumans, Mixamo, etc.) without changing a line of core logic.
-*   **Ground Truth Validation (`visualize_npz.py`):** Before injection, we use this tool to solve the SMPL Forward Kinematics and render the motion in Matplotlib, ensuring the AI's output is physically sound.
+*   **Scalability via `bone_mapping.py`:** Rather than hardcoding bone names, the system uses a **Translation Dictionary**. This makes the project **skeleton-agnostic**; by simply updating this map, the pipeline can target any humanoid skeleton (MetaHumans, Mixamo, etc.).
+*   **Ground Truth Validation (`visualize_npz.py`):** Before injection, we solve the SMPL Forward Kinematics and render the motion in Matplotlib to ensure physical integrity.
 
 ---
 
 ## 🛠️ Pipeline Stage 2: C++ Injection Engine (`AInimateBPLibrary.cpp`)
 Running natively within Unreal Engine 5.6.1, this backend performs the final bit-level asset authoring.
 
-*   **Direct Memory Injection:** Utilizes the modern **`IAnimationDataController`** API to author animation curves directly in memory, ensuring zero data loss and $O(n)$ latency.
+*   **Direct Memory Injection:** Utilizes the modern **`IAnimationDataController`** API to author animation curves directly in memory, ensuring zero precision loss and $O(n)$ latency.
 *   **Recursive FK Solver:** A hierarchical solver that translates corrected global transforms back into the parent-relative local keys required by the engine's `.uasset` format.
-*   **Translation Locking Layer:** To prevent "Spaghetti Monster" artifacts (mesh tearing), I implemented a locking layer that forces deformer bones to the Unreal Reference Skeleton's lengths while preserving the high-fidelity AI-generated rotations.
+*   **Translation Locking Layer:** To prevent "Spaghetti Monster" artifacts (mesh tearing), I implemented a locking layer that forces deformer bones to the Unreal Reference Skeleton's lengths while preserving AI rotations.
+
+### 🖥️ User Interface & Tooling
+To facilitate a production workflow, the pipeline is triggered via a custom **Editor Utility Widget (EUW)**. This allows animators to select a JSON payload and a target mesh to generate assets with a single click.
+
+| **Plugin Control Panel** | **Generated Animation Assets** |
+| :---: | :---: |
+| ![Plugin UI](media/plugin_ui.png) | ![Content Browser Directory](media/asset_directory.png) |
+| *Custom EUW for one-click deployment* | *Native .uasset sequences saved to project directory* |
 
 ---
 
 ## 🧠 Engineering Challenge: Resolving Skeletal Mismatch ($Q_{\Delta}$)
 
-One of the primary hurdles in AI-to-Engine deployment is the **Rest Pose Discrepancy**. The AI model generates motion for a mathematical SMPL skeleton in a **T-Pose**, whereas the Unreal Engine 5 sk_mannequin is authored in an **A-Pose**.
-
-### The Problem: Rotational Divergence
-Directly mapping SMPL rotations onto a UE5 mesh results in severe limb distortion. Because the "zero state" of the arms differs by roughly 45 degrees, a "Walk" animation from the AI would cause the Unreal character’s arms to clip into its own chest or twist unnaturally.
+The AI model generates motion for a mathematical SMPL skeleton in a **T-Pose**, whereas the Unreal Engine 5 `sk_mannequin` is authored in an **A-Pose**. 
 
 ### The Solution: Identity Calibration Algorithm
-I developed a mathematical bridge that calculates a **Rotational Delta ($Q_{\Delta}$)** for every bone once at the start of the injection. By bringing both the SMPL Identity T-Pose and the Unreal Reference Pose into **Global Space**, the system "discovers" the structural difference between the two skeletons.
+I developed a mathematical bridge that calculates a **Rotational Delta ($Q_{\Delta}$)** for every bone once at the start of the injection. By bringing both the SMPL Identity T-Pose and the Unreal Reference Pose into **Global Space**, the system "discovers" the structural difference.
 
 **The Calibration Formula:**
 $$Q_{\Delta} = (Q_{SMPL\_Global\_Identity})^{-1} \otimes Q_{UE\_Global\_Reference}$$
 
-This correction is applied to every frame, ensuring the character maintains perfect posture regardless of the target skeleton's native rest pose.
-
 | **Direct Mapping (Twisted/Clipping)** | **Identity Calibration (Corrected)** |
 | :---: | :---: |
 | ![Calibration Error](media/calibration_before.png) | ![Calibration Success](media/calibration_after.png) |
-| *Arms clipping due to T-Pose/A-Pose mismatch* | *Corrected alignment via QΔ math* |
+| *Arms clipping due to T-Pose/A-Pose mismatch* | *Corrected alignment via $Q_{\Delta}$ math* |
 
 ---
 
 ## 📊 The Data Contract (JSON Bridge)
-The stages communicate via a high-precision JSON bridge. This decoupled architecture allows the AI to be hosted on high-end GPU servers while the plugin remains lightweight for the developer's workstation.
+The stages communicate via a high-precision JSON bridge, ensuring the ML backend remains decoupled from the Engine frontend.
 
 ```json
 {
@@ -101,7 +104,7 @@ The stages communicate via a high-precision JSON bridge. This decoupled architec
 ## ⚙️ Tech Stack
 *   **Engine:** Unreal Engine 5.6.1 (C++, Blueprints)
 *   **Deep Learning Support:** Python 3.10, PyTorch, SMPL-X (smplx)
-*   **Math:** NumPy (v1.23.5 - pinned for binary stability), SciPy
+*   **Math:** NumPy (v1.23.5 - pinned for stability), SciPy
 *   **APIs:** IAnimationDataController, FReferenceSkeleton
 
 ---
